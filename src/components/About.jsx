@@ -25,7 +25,7 @@ const About = () => {
         <ul className="service-list">
           <li className="service-item">
             <div className="service-icon-box">
-              <img src="./assets/images/icon-design.svg" alt="design icon" width="40" />
+              <img src="../../public/assets/icon-app.svg" alt="design icon" width="40" />
             </div>
 
             <div className="service-content-box">
@@ -38,7 +38,7 @@ const About = () => {
 
           <li className="service-item">
             <div className="service-icon-box">
-              <img src="./assets/images/icon-dev.svg" alt="Web development icon" width="40" />
+              <img src="../../public/assets/icon-design.svg" alt="Web development icon" width="40" />
             </div>
 
             <div className="service-content-box">
