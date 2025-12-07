@@ -85,7 +85,10 @@ sidebarBtn.addEventListener("click", function () { elementToggleFunc(sidebar); }
 // modalCloseBtn.addEventListener("click", testimonialsModalFunc);
 // overlay.addEventListener("click", testimonialsModalFunc);
 
+// blog modals
 
+const blogItems = document.querySelectorAll("[project-img");
+const blogModalContainer = docuument.querySelector("[")
 
 // custom select variables
 const select = document.querySelector("[data-select]");

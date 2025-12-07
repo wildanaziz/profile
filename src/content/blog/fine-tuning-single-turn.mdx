@@ -1,0 +1,624 @@
+---
+title: "Fine-Tuning LLMs for Single-Turn Conversations with Unsloth"
+category: "Deep Learning"
+date: "2025-12-07"
+description: "A comprehensive guide to fine-tuning Large Language Models for single-turn Q&A tasks using Unsloth, LoRA, and efficient training techniques"
+image: "https://pbs.twimg.com/media/GHmJPYubEAA1Hrh.jpg"
+author: "Wildan Aziz"
+tags: ["LLM", "Fine-Tuning", "Unsloth", "LoRA", "Deep Learning", "NLP"]
+---
+
+import YouTube from '../../components/YouTube.jsx';
+
+# Fine-Tuning LLMs for Single-Turn Conversations with Unsloth
+
+<div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
+  <a href="https://huggingface.co/dtp-fine-tuning/DTP_AGQ_Question_Diploy_9K" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-yellow" alt="HuggingFace Model" />
+  </a>
+  <a href="https://api.wandb.ai/links/DTP2/zh541s0e" target="_blank" rel="noopener noreferrer">
+    <img src="https://img.shields.io/badge/Weights%20&%20Biases-Report-orange" alt="W&B Report" />
+  </a>
+  <img src="https://img.shields.io/badge/Unsloth-2x%20Faster-blue" alt="Unsloth" />
+  <img src="https://img.shields.io/badge/LoRA-Efficient-green" alt="LoRA" />
+</div>
+
+Fine-tuning Large Language Models (LLMs) untuk task-specific applications adalah salah satu teknik paling efektif untuk meningkatkan performa model pada domain tertentu. Dalam tutorial ini, kita akan mempelajari cara fine-tuning LLM untuk **single-turn conversations** menggunakan **Unsloth** - sebuah library yang mengoptimalkan training speed hingga 2x lebih cepat dengan memory usage 60% lebih rendah.
+
+## Daftar Isi
+
+1. [Apa itu Single-Turn Fine-Tuning?](#single-turn-overview)
+2. [Mengapa Unsloth?](#why-unsloth)
+3. [Setup Environment](#setup)
+4. [Dataset Preparation](#dataset)
+5. [Configuration File](#config)
+6. [Training Script](#training)
+7. [Running Training](#running)
+8. [Results & Evaluation](#results)
+
+---
+
+## Apa itu Single-Turn Fine-Tuning?
+
+**Single-turn conversation** adalah interaksi di mana model menerima satu pertanyaan/instruksi dan memberikan satu respons, tanpa context dari percakapan sebelumnya. Format ini ideal untuk:
+
+- **Q&A Systems**: Menjawab pertanyaan spesifik
+- **Classification Tasks**: Mengkategorikan teks
+- **Instruction Following**: Mengikuti instruksi sederhana
+- **Translation**: Menerjemahkan teks
+- **Summarization**: Merangkum dokumen
+
+### Format Dataset
+
+Single-turn dataset biasanya memiliki struktur:
+
+```json
+{
+  "instruction": "What is machine learning?",
+  "input": "",
+  "output": "Machine learning is a subset of artificial intelligence..."
+}
+```
+
+Atau format lain seperti:
+
+```json
+{
+  "question": "How does gradient descent work?",
+  "answer": "Gradient descent is an optimization algorithm..."
+}
+```
+
+---
+
+## Mengapa Unsloth?
+
+**Unsloth** adalah library yang dirancang untuk mempercepat fine-tuning LLM dengan beberapa keunggulan:
+
+### Keunggulan Unsloth
+
+- **2x Faster Training**: Optimisasi kernel untuk forward/backward pass
+- **60% Less Memory**: Efficient gradient checkpointing
+- **Support 4-bit Quantization**: Training dengan memory terbatas
+- **Zero Code Changes**: Drop-in replacement untuk Hugging Face
+- **Built-in Chat Templates**: Easy formatting untuk berbagai model
+
+### Perbandingan Training Time
+
+| Method | Training Time | Memory Usage |
+|--------|--------------|--------------|
+| Standard HF | 100% | 100% |
+| Unsloth + LoRA | 50% | 40% |
+| Unsloth + 4-bit | 45% | 25% |
+
+---
+
+## Setup Environment
+
+### Install Dependencies
+
+```bash
+pip install "unsloth[cu118] @ git+https://github.com/unslothai/unsloth.git"
+pip install datasets trl transformers wandb pyyaml
+```
+
+### Verify GPU
+
+```python
+import torch
+print(f"CUDA Available: {torch.cuda.is_available()}")
+print(f"GPU: {torch.cuda.get_device_name(0)}")
+print(f"CUDA Version: {torch.version.cuda}")
+```
+
+### Project Structure
+
+```
+fine-tuning-project/
+├── configs/
+│   └── sft_qwen3_unsloth_agq_9k.yaml
+├── src/
+│   └── training/
+│       └── train_unsloth_single_turn.py
+├── scripts/
+│   └── run_training_unsloth.sh
+└── logs/
+```
+
+---
+
+## Dataset Preparation
+
+### Dataset Format Detection
+
+Script training kita mendukung multiple format secara otomatis:
+
+#### 1. Alpaca Format
+
+```python
+{
+  "instruction": "Classify the sentiment",
+  "input": "This movie is amazing!",
+  "output": "Positive"
+}
+```
+
+#### 2. Prompt-Completion Format
+
+```python
+{
+  "prompt": "Translate to Indonesian: Hello",
+  "completion": "Halo"
+}
+```
+
+#### 3. Q&A Format
+
+```python
+{
+  "question": "What is Python?",
+  "answer": "Python is a high-level programming language..."
+}
+```
+
+### Auto-Format Detection Code
+
+```python
+def detect_and_format_dataset(dataset: Dataset, tokenizer, config: Dict) -> Dataset:
+    """
+    Auto-detect dataset format and apply appropriate formatting
+    """
+    sample = dataset[0]
+    columns = set(sample.keys())
+    
+    print(f"Detected columns: {columns}")
+    
+    # Check if already has 'text' column
+    if 'text' in columns:
+        print("Dataset already has 'text' column, using as-is.")
+        return dataset
+    
+    # Detect Alpaca format
+    if 'instruction' in columns and ('output' in columns or 'response' in columns):
+        print("Detected Alpaca-style format (instruction, input, output)")
+        return dataset.map(
+            lambda x: format_alpaca_style(x, tokenizer),
+            num_proc=config.get('training', {}).get('dataset_num_proc', 2)
+        )
+    
+    # Detect Q&A format
+    if 'question' in columns and 'answer' in columns:
+        print("Detected Q&A format")
+        return dataset.map(
+            lambda x: format_qa_style(x, tokenizer),
+            num_proc=config.get('training', {}).get('dataset_num_proc', 2)
+        )
+    
+    return dataset
+```
+
+### Chat Template Application
+
+```python
+def format_alpaca_style(example: Dict, tokenizer) -> Dict:
+    """
+    Format Alpaca-style dataset: instruction, input (optional), output
+    """
+    instruction = example.get('instruction', '')
+    input_text = example.get('input', '')
+    output = example.get('output', example.get('response', ''))
+    
+    # Combine instruction and input
+    if input_text:
+        user_content = f"{instruction}\n\n{input_text}"
+    else:
+        user_content = instruction
+    
+    # Create messages format for chat template
+    messages = [
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": output}
+    ]
+    
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False
+    )
+    
+    return {"text": text}
+```
+
+---
+
+## Configuration File
+
+### Complete YAML Configuration
+
+```yaml
+# Model Configuration
+model:
+  name: "ismaprasetiyadi/Biawak-8B-Base"
+  trust_remote_code: true
+  use_cache: false
+
+chat_template:
+  name: "qwen3"
+
+# Tokenizer Configuration
+tokenizer:
+  padding_side: "left"  
+  trust_remote_code: true
+
+# Quantization Configuration (4-bit for memory efficiency)
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+
+# LoRA Configuration
+lora:
+  r: 16
+  lora_alpha: 32
+  target_modules: 
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.05  
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+# Dataset Configuration
+dataset:
+  name: "dtp-fine-tuning/dtp-singleturn-AGQ-9k"
+  split: "train"
+  test_size: 0.1  
+  seed: 42
+  max_length: 8192
+
+# Training Arguments
+training:
+  output_dir: "./outputs/qwen3_singleturn_unsloth"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 8
+  gradient_checkpointing: true
+  
+  # Optimizer
+  optim: "adamw_8bit"
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  
+  # Logging
+  logging_steps: 10
+  eval_strategy: "steps"
+  eval_steps: 100
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 3
+  
+  # Performance
+  fp16: false
+  bf16: true
+  max_grad_norm: 1.0
+  seed: 42
+  report_to: "wandb"
+
+# Wandb Configuration
+wandb:
+  entity: "your-team"
+  project: "llm-fine-tuning"
+  tags: 
+    - "single-turn"
+    - "unsloth"
+    - "lora"
+```
+
+### Key Configuration Explained
+
+#### LoRA Parameters
+
+- **r (rank)**: 16 - Determines matrix decomposition size
+- **lora_alpha**: 32 - Scaling factor (usually 2x of r)
+- **lora_dropout**: 0.05 - Regularization to prevent overfitting
+- **target_modules**: Which layers to apply LoRA (all attention + MLP)
+
+#### 4-bit Quantization
+
+- **bnb_4bit_quant_type**: "nf4" - NormalFloat4 quantization
+- **bnb_4bit_compute_dtype**: "float16" - Computation precision
+- **bnb_4bit_use_double_quant**: Quantize quantization constants
+
+---
+
+## Training Script
+
+### Main Training Function
+
+```python
+def main(config_path: str):
+    # Load config
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print(f"Loaded config from {config_path}")
+
+    # Detect model
+    model_name = config['model']['name']
+    print(f"Using model: {model_name}")
+
+    # Initialize Wandb
+    if config.get('training', {}).get('report_to') == 'wandb':
+        wandb.init(
+            project=config['wandb']['project'],
+            name=config['training'].get('run_name'),
+            config=config
+        )
+    
+    # Load model with Unsloth
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name,
+        max_seq_length=config['dataset']['max_length'],
+        dtype=None,
+        load_in_4bit=config['quantization']['load_in_4bit'],
+        trust_remote_code=config['model']['trust_remote_code']
+    )
+
+    # Apply LoRA
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=config['lora']['r'],
+        lora_alpha=config['lora']['lora_alpha'],
+        target_modules=config['lora']['target_modules'],
+        lora_dropout=config['lora']['lora_dropout'],
+        bias=config['lora']['bias'],
+        use_gradient_checkpointing="unsloth",
+        random_state=config['dataset']['seed']
+    )
+
+    # Setup chat template
+    tokenizer = get_chat_template(
+        tokenizer,
+        chat_template=config['chat_template']['name']
+    )
+
+    # Load and prepare dataset
+    train_dataset, test_dataset = load_and_prepare_dataset(config, tokenizer)
+    
+    # Auto-detect and format dataset
+    train_dataset = detect_and_format_dataset(train_dataset, tokenizer, config)
+    if test_dataset:
+        test_dataset = detect_and_format_dataset(test_dataset, tokenizer, config)
+
+    # Create SFT Trainer
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset,
+        dataset_text_field="text",
+        max_seq_length=config['dataset']['max_length'],
+        args=SFTConfig(
+            output_dir=config['training']['output_dir'],
+            num_train_epochs=config['training']['num_train_epochs'],
+            per_device_train_batch_size=config['training']['per_device_train_batch_size'],
+            gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
+            learning_rate=config['training']['learning_rate'],
+            fp16=not is_bfloat16_supported(),
+            bf16=is_bfloat16_supported(),
+            logging_steps=config['training']['logging_steps'],
+            save_strategy=config['training']['save_strategy'],
+            report_to=config['training']['report_to']
+        )
+    )
+
+    # Train
+    print("Starting training...")
+    trainer.train()
+    
+    # Save final model
+    print("Saving final model...")
+    trainer.save_model(config['training']['output_dir'])
+    
+    # Save to Hugging Face Hub (optional)
+    if config.get('hub', {}).get('push_to_hub', False):
+        model.push_to_hub(
+            config['hub']['repo_name'],
+            token=os.environ.get("HF_TOKEN")
+        )
+        tokenizer.push_to_hub(
+            config['hub']['repo_name'],
+            token=os.environ.get("HF_TOKEN")
+        )
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_args()
+    
+    main(args.config)
+```
+
+---
+
+## Running Training
+
+### Training Script (run_training_unsloth.sh)
+
+```bash
+#!/bin/bash
+set -e
+
+# Color codes
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Configuration
+CONFIG_FILE="configs/sft_qwen3_unsloth_agq_9k.yaml"
+TRAINING_SCRIPT="src/training/train_unsloth_single_turn.py"
+LOG_DIR="logs"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOG_FILE="${LOG_DIR}/training_${TIMESTAMP}.log"
+
+# Create log directory
+mkdir -p ${LOG_DIR}
+
+echo -e "${GREEN}Starting Single-Turn Fine-Tuning with Unsloth${NC}"
+echo -e "${YELLOW}Config: ${CONFIG_FILE}${NC}"
+echo -e "${YELLOW}Logging to: ${LOG_FILE}${NC}"
+
+# Run training
+python ${TRAINING_SCRIPT} \
+    --config ${CONFIG_FILE} \
+    2>&1 | tee ${LOG_FILE}
+
+echo -e "${GREEN}Training completed!${NC}"
+```
+
+### Execute Training
+
+```bash
+# Make script executable
+chmod +x scripts/run_training_unsloth.sh
+
+# Run training
+./scripts/run_training_unsloth.sh
+```
+
+### Monitor with Wandb
+
+```python
+# Training metrics will be automatically logged to Wandb
+# View at: https://wandb.ai/your-team/llm-fine-tuning
+```
+
+---
+
+## Results & Evaluation
+
+### Model & Training Reports
+
+<div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '30px' }}>
+  <a href="https://huggingface.co/dtp-fine-tuning/DTP_AGQ_Question_Diploy_9K" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+    <div style={{ 
+      background: 'var(--border-gradient-onyx)', 
+      padding: '15px 20px', 
+      borderRadius: '10px',
+      border: '1px solid var(--jet)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px'
+    }}>
+      <img src="https://img.shields.io/badge/%F0%9F%A4%97-Hugging%20Face-FFD21E?style=for-the-badge" alt="HuggingFace" />
+      <span style={{ color: 'var(--light-gray)', fontSize: '14px' }}>View Fine-tuned Model</span>
+    </div>
+  </a>
+  
+  <a href="https://api.wandb.ai/links/DTP2/zh541s0e" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+    <div style={{ 
+      background: 'var(--border-gradient-onyx)', 
+      padding: '15px 20px', 
+      borderRadius: '10px',
+      border: '1px solid var(--jet)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px'
+    }}>
+      <img src="https://img.shields.io/badge/Weights%20&%20Biases-FFBE00?style=for-the-badge&logo=weightsandbiases&logoColor=black" alt="W&B" />
+      <span style={{ color: 'var(--light-gray)', fontSize: '14px' }}>View Training Reports</span>
+    </div>
+  </a>
+</div>
+
+### Training Metrics
+
+Typical metrics untuk single-turn fine-tuning:
+
+| Metric | Baseline | After Fine-Tuning |
+|--------|----------|-------------------|
+| Training Loss | 2.45 | 0.32 |
+| Validation Loss | 2.51 | 0.48 |
+| Perplexity | 12.2 | 1.6 |
+| BLEU Score | 0.23 | 0.78 |
+
+### Inference Example
+
+```python
+from unsloth import FastLanguageModel
+
+# Load fine-tuned model
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name="./outputs/qwen3_singleturn_unsloth",
+    max_seq_length=8192,
+    dtype=None,
+    load_in_4bit=True
+)
+
+FastLanguageModel.for_inference(model)
+
+# Prepare prompt
+messages = [
+    {"role": "user", "content": "What is the capital of Indonesia?"}
+]
+
+inputs = tokenizer.apply_chat_template(
+    messages,
+    tokenize=True,
+    add_generation_prompt=True,
+    return_tensors="pt"
+).to("cuda")
+
+# Generate
+outputs = model.generate(
+    input_ids=inputs,
+    max_new_tokens=256,
+    temperature=0.7,
+    top_p=0.9,
+    do_sample=True
+)
+
+response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+print(response)
+# Output: "The capital of Indonesia is Jakarta..."
+```
+
+### Performance Tips
+
+1. **Batch Size**: Increase untuk GPU besar (A100: 8-16)
+2. **Gradient Accumulation**: Kompensasi batch size kecil
+3. **Learning Rate**: 2e-4 optimal untuk LoRA
+4. **Max Length**: Sesuaikan dengan dataset (2048-8192)
+5. **LoRA Rank**: 8-32 (higher = lebih ekspresif tapi slower)
+
+---
+
+## Conclusion
+
+Fine-tuning LLM untuk single-turn conversations dengan Unsloth memberikan:
+
+✅ **2x Faster Training** dibanding standard methods  
+✅ **60% Memory Reduction** dengan 4-bit quantization  
+✅ **Auto-Format Detection** untuk berbagai dataset  
+✅ **Production-Ready** models dengan inference optimization  
+✅ **Easy Integration** dengan Hugging Face ecosystem
+
+Untuk multi-turn conversations, silakan baca tutorial berikutnya tentang **Fine-Tuning Multi-Turn Conversations**!
+
+---
+
+> **📌 Resources:**
+> - [Unsloth GitHub](https://github.com/unslothai/unsloth)
+> - [LoRA Paper](https://arxiv.org/abs/2106.09685)
+> - [Hugging Face TRL](https://github.com/huggingface/trl)
+> - [Weights & Biases](https://wandb.ai)
+
+**Happy Fine-Tuning! 🚀**

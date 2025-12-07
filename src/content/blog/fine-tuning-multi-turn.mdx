@@ -1,0 +1,874 @@
+---
+title: "Fine-Tuning LLMs for Multi-Turn Conversations with Unsloth"
+category: "Deep Learning"
+date: "2025-12-07"
+description: "Master the art of fine-tuning Large Language Models for multi-turn dialogues using Unsloth, LoRA, and conversation context management"
+image: "https://cdn.prod.website-files.com/650c3b59079d92475f37b68f/6744a0a37714a7f24590c370_AD_4nXd6cypThM97XlOanEY22AG8YMiF2Ux1fpLgXGAcFqts2CQDOpQIiw_7_k2pA8CoxHiiVmhacCC_BaGx3-xNYOaCjKPYy_F-qTtzmZ7poW8fmuhyz-rpyyM9tSjff4cyiTnmNGfk.png"
+author: "Wildan Aziz"
+tags: ["LLM", "Fine-Tuning", "Unsloth", "LoRA", "Chatbot", "Conversational AI"]
+---
+
+import YouTube from '../../components/YouTube.jsx';
+
+# Fine-Tuning LLMs for Multi-Turn Conversations with Unsloth
+
+Multi-turn conversation adalah kemampuan model untuk mempertahankan context sepanjang dialog dengan beberapa exchange user-assistant. Berbeda dengan single-turn, multi-turn memerlukan model untuk **mengingat percakapan sebelumnya** dan memberikan respons yang konsisten dan contextual. Tutorial ini akan membahas fine-tuning LLM untuk multi-turn conversations menggunakan **Unsloth**.
+
+## Daftar Isi
+
+1. [Apa itu Multi-Turn Conversation?](#multi-turn-overview)
+2. [Perbedaan Single vs Multi-Turn](#comparison)
+3. [Dataset Format untuk Multi-Turn](#dataset-format)
+4. [Architecture & Configuration](#architecture)
+5. [Training Implementation](#implementation)
+6. [Advanced Techniques](#advanced)
+7. [Evaluation & Testing](#evaluation)
+8. [Production Deployment](#deployment)
+
+---
+
+## Apa itu Multi-Turn Conversation? 
+
+**Multi-turn conversation** adalah dialog yang terdiri dari multiple exchanges antara user dan assistant, di mana setiap respons bergantung pada context dari percakapan sebelumnya.
+
+### Contoh Multi-Turn Dialog
+
+```json
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful AI assistant specialized in programming."
+    },
+    {
+      "role": "user",
+      "content": "What is Python?"
+    },
+    {
+      "role": "assistant",
+      "content": "Python is a high-level, interpreted programming language known for its simplicity and readability."
+    },
+    {
+      "role": "user",
+      "content": "Can you show me an example?"
+    },
+    {
+      "role": "assistant",
+      "content": "Sure! Here's a simple Python example: print('Hello, World!')"
+    },
+    {
+      "role": "user",
+      "content": "How do I run it?"
+    },
+    {
+      "role": "assistant",
+      "content": "To run the Python code I showed you, save it in a file with .py extension and execute: python filename.py"
+    }
+  ]
+}
+```
+
+### Use Cases
+
+- **Customer Support Chatbots**: Handling complex queries dengan follow-up
+- **Technical Assistants**: Debugging dengan iterative problem solving
+- **Educational Tutors**: Step-by-step learning dengan Q&A
+- **Personal Assistants**: Task planning dengan multi-step instructions
+
+---
+
+## Perbedaan Single vs Multi-Turn 
+
+### Comparison Table
+
+| Aspect | Single-Turn | Multi-Turn |
+|--------|-------------|------------|
+| **Context** | No history | Full conversation history |
+| **Complexity** | Simple Q&A | Complex dialogues |
+| **Memory** | Low | Higher (context window) |
+| **Training** | Simpler | More challenging |
+| **Use Case** | Classification, Q&A | Chatbots, Assistants |
+| **Format** | One exchange | Multiple exchanges |
+
+### Training Data Structure
+
+**Single-Turn:**
+```python
+{
+  "text": "<user>What is ML?</user><assistant>ML is...</assistant>"
+}
+```
+
+**Multi-Turn:**
+```python
+{
+  "text": "<system>You are helpful.</system><user>What is ML?</user><assistant>ML is...</assistant><user>Give example</user><assistant>Sure! Here's...</assistant>"
+}
+```
+
+---
+
+## Dataset Format untuk Multi-Turn 
+
+### Standard Messages Format
+
+```json
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "System instruction here"
+    },
+    {
+      "role": "user",
+      "content": "User message 1"
+    },
+    {
+      "role": "assistant",
+      "content": "Assistant response 1"
+    },
+    {
+      "role": "user",
+      "content": "User message 2"
+    },
+    {
+      "role": "assistant",
+      "content": "Assistant response 2"
+    }
+  ]
+}
+```
+
+### Dataset Conversion Script
+
+```python
+def format_multi_turn_messages(example: Dict, tokenizer) -> Dict:
+    """
+    Convert messages format to training text with chat template
+    """
+    messages = example.get('messages', [])
+    
+    # Validate messages structure
+    if not messages or len(messages) < 2:
+        raise ValueError("Invalid messages format")
+    
+    # Apply chat template
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False
+    )
+    
+    return {"text": text}
+
+
+def load_and_prepare_dataset(config: Dict, tokenizer) -> Tuple[Dataset, Dataset]:
+    """
+    Load multi-turn dataset and prepare for training
+    """
+    dataset_name = config['dataset']['name']
+    split = config['dataset'].get('split', 'train')
+    test_size = config['dataset'].get('test_size', 0.1)
+    seed = config['dataset'].get('seed', 42)
+
+    print(f"Loading dataset: {dataset_name}")
+    dataset = load_dataset(dataset_name, split=split)
+    
+    # Check dataset format
+    sample = dataset[0]
+    print(f"Dataset columns: {dataset.column_names}")
+    print(f"Sample keys: {sample.keys()}")
+    
+    # Convert messages to text if needed
+    if 'messages' in sample and 'text' not in sample:
+        print("Converting 'messages' format to 'text' using chat template...")
+        
+        dataset = dataset.map(
+            lambda x: format_multi_turn_messages(x, tokenizer),
+            num_proc=config.get('training', {}).get('dataset_num_proc', 2)
+        )
+        
+        print("Dataset converted to 'text' format.")
+    
+    # Split dataset
+    if test_size > 0:
+        dataset_split = dataset.train_test_split(test_size=test_size, seed=seed)
+        train_dataset = dataset_split['train']
+        test_dataset = dataset_split['test']
+    else:
+        train_dataset = dataset
+        test_dataset = None
+    
+    print(f"Train size: {len(train_dataset)}")
+    if test_dataset:
+        print(f"Test size: {len(test_dataset)}")
+    
+    return train_dataset, test_dataset
+```
+
+### Train on Responses Only
+
+Untuk multi-turn, kita hanya ingin model belajar dari **assistant responses**, bukan user messages:
+
+```python
+from unsloth.chat_templates import train_on_responses_only
+
+# Setup trainer to only compute loss on assistant responses
+trainer = train_on_responses_only(
+    trainer,
+    instruction_part="<|im_start|>user\n",
+    response_part="<|im_start|>assistant\n"
+)
+```
+
+---
+
+## Architecture & Configuration 
+
+### Complete Training Configuration
+
+```yaml
+# Model Configuration
+model:
+  name: "ismaprasetiyadi/Biawak-8B-Base"
+  trust_remote_code: true
+  use_cache: false
+
+chat_template:
+  name: "qwen3"  # Support for multi-turn conversations
+
+# Tokenizer Configuration
+tokenizer:
+  padding_side: "left"  
+  trust_remote_code: true
+
+# Quantization Configuration
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+
+# LoRA Configuration
+lora:
+  r: 16
+  lora_alpha: 32
+  target_modules: 
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  lora_dropout: 0.05  
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+# Dataset Configuration
+dataset:
+  name: "dtp-fine-tuning/dtp-multiturn-interview-10k-combined"
+  split: "train"
+  test_size: 0.1  
+  seed: 42
+  max_length: 2048  # Important: longer for multi-turn context
+
+# Training Arguments
+training:
+  output_dir: "./outputs/qwen3_multiturn_unsloth"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 8
+  gradient_checkpointing: true
+  
+  # Optimizer
+  optim: "adamw_8bit"
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  
+  # Logging & Evaluation
+  logging_steps: 10
+  eval_strategy: "steps"
+  eval_steps: 100
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 3
+  
+  # Performance
+  fp16: false
+  bf16: true
+  max_grad_norm: 1.0
+  seed: 42
+  report_to: "wandb"
+  dataset_num_proc: 2
+
+# Wandb Configuration
+wandb:
+  entity: "your-team"
+  project: "llm-multiturn-finetune"
+  tags: 
+    - "multi-turn"
+    - "unsloth"
+    - "conversational-ai"
+  notes: "Multi-turn conversation fine-tuning with Unsloth"
+```
+
+### Key Differences from Single-Turn
+
+1. **max_length**: 2048-4096 (lebih panjang untuk context)
+2. **dataset format**: Messages array dengan multiple turns
+3. **training technique**: Train on responses only
+4. **batch_size**: Lebih kecil karena longer sequences
+
+---
+
+## Training Implementation 
+
+### Complete Training Script
+
+```python
+import os
+import torch
+import yaml
+import argparse
+from typing import Dict, Tuple
+from datetime import datetime
+
+from unsloth import FastLanguageModel, is_bfloat16_supported
+from unsloth.chat_templates import get_chat_template, train_on_responses_only
+from datasets import load_dataset, Dataset
+from trl import SFTTrainer, SFTConfig
+from transformers import EarlyStoppingCallback
+import wandb
+
+
+def setup_model_and_tokenizer(config: Dict):
+    """
+    Load model with Unsloth optimizations
+    """
+    model_name = config['model']['name']
+    print(f"Loading model: {model_name}")
+    
+    # Load with Unsloth
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name,
+        max_seq_length=config['dataset']['max_length'],
+        dtype=None,
+        load_in_4bit=config['quantization']['load_in_4bit'],
+        trust_remote_code=config['model']['trust_remote_code']
+    )
+    
+    # Apply LoRA
+    print("Applying LoRA adapters...")
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=config['lora']['r'],
+        lora_alpha=config['lora']['lora_alpha'],
+        target_modules=config['lora']['target_modules'],
+        lora_dropout=config['lora']['lora_dropout'],
+        bias=config['lora']['bias'],
+        use_gradient_checkpointing="unsloth",
+        random_state=config['dataset']['seed']
+    )
+    
+    # Setup chat template
+    print(f"Setting up chat template: {config['chat_template']['name']}")
+    tokenizer = get_chat_template(
+        tokenizer,
+        chat_template=config['chat_template']['name']
+    )
+    
+    return model, tokenizer
+
+
+def main(config_path: str):
+    # Load configuration
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print("="*80)
+    print("MULTI-TURN CONVERSATION FINE-TUNING WITH UNSLOTH")
+    print("="*80)
+    print(f"\nConfig: {config_path}")
+    print(f"Model: {config['model']['name']}")
+    print(f"Dataset: {config['dataset']['name']}")
+    print(f"Max Length: {config['dataset']['max_length']}")
+    print(f"LoRA Rank: {config['lora']['r']}")
+    print("="*80 + "\n")
+    
+    # Initialize Wandb
+    if config.get('training', {}).get('report_to') == 'wandb':
+        if os.environ.get("WANDB_API_KEY"):
+            wandb_config = config.get('wandb', {})
+            run_name = config['training'].get(
+                'run_name', 
+                f"MultiTurn-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            )
+            
+            wandb.init(
+                entity=wandb_config.get('entity'),
+                project=wandb_config.get('project'),
+                name=run_name,
+                tags=wandb_config.get('tags', []),
+                notes=wandb_config.get('notes', ''),
+                config=config
+            )
+            print("✓ Wandb initialized")
+        else:
+            print("⚠ WANDB_API_KEY not found, skipping Wandb logging")
+            config['training']['report_to'] = None
+    
+    # Setup model and tokenizer
+    model, tokenizer = setup_model_and_tokenizer(config)
+    
+    # Load and prepare dataset
+    print("\nLoading dataset...")
+    train_dataset, test_dataset = load_and_prepare_dataset(config, tokenizer)
+    
+    # Print sample
+    print("\n" + "="*80)
+    print("SAMPLE TRAINING DATA:")
+    print("="*80)
+    print(train_dataset[0]['text'][:500] + "...")
+    print("="*80 + "\n")
+    
+    # Create training arguments
+    training_args = SFTConfig(
+        output_dir=config['training']['output_dir'],
+        num_train_epochs=config['training']['num_train_epochs'],
+        per_device_train_batch_size=config['training']['per_device_train_batch_size'],
+        per_device_eval_batch_size=config['training']['per_device_eval_batch_size'],
+        gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
+        gradient_checkpointing=config['training']['gradient_checkpointing'],
+        
+        # Optimizer
+        optim=config['training']['optim'],
+        learning_rate=config['training']['learning_rate'],
+        weight_decay=config['training']['weight_decay'],
+        warmup_ratio=config['training']['warmup_ratio'],
+        lr_scheduler_type=config['training']['lr_scheduler_type'],
+        
+        # Logging
+        logging_steps=config['training']['logging_steps'],
+        eval_strategy=config['training']['eval_strategy'],
+        eval_steps=config['training']['eval_steps'],
+        save_strategy=config['training']['save_strategy'],
+        save_steps=config['training']['save_steps'],
+        save_total_limit=config['training']['save_total_limit'],
+        
+        # Performance
+        fp16=config['training']['fp16'],
+        bf16=config['training']['bf16'],
+        max_grad_norm=config['training']['max_grad_norm'],
+        seed=config['training']['seed'],
+        report_to=config['training']['report_to'],
+        
+        # Dataset
+        dataset_text_field="text",
+        max_seq_length=config['dataset']['max_length'],
+        packing=False  # Important for multi-turn
+    )
+    
+    # Create trainer
+    print("Creating SFT Trainer...")
+    trainer = SFTTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=test_dataset,
+        args=training_args
+    )
+    
+    # Train on responses only (important for multi-turn!)
+    print("Configuring to train on responses only...")
+    trainer = train_on_responses_only(
+        trainer,
+        instruction_part="<|im_start|>user\n",
+        response_part="<|im_start|>assistant\n"
+    )
+    
+    # Start training
+    print("\n" + "="*80)
+    print("STARTING TRAINING")
+    print("="*80 + "\n")
+    
+    trainer.train()
+    
+    # Save final model
+    print("\n" + "="*80)
+    print("SAVING MODEL")
+    print("="*80)
+    
+    output_dir = config['training']['output_dir']
+    print(f"Saving to: {output_dir}")
+    
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    
+    print("✓ Model saved successfully")
+    
+    # Push to Hub (optional)
+    if config.get('hub', {}).get('push_to_hub', False):
+        print("\nPushing to Hugging Face Hub...")
+        repo_name = config['hub']['repo_name']
+        
+        model.push_to_hub(
+            repo_name,
+            token=os.environ.get("HF_TOKEN"),
+            private=config['hub'].get('private', True)
+        )
+        
+        tokenizer.push_to_hub(
+            repo_name,
+            token=os.environ.get("HF_TOKEN"),
+            private=config['hub'].get('private', True)
+        )
+        
+        print(f"✓ Model pushed to: {repo_name}")
+    
+    print("\n" + "="*80)
+    print("TRAINING COMPLETED!")
+    print("="*80)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Multi-Turn Conversation Fine-Tuning with Unsloth"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to YAML config file"
+    )
+    
+    args = parser.parse_args()
+    main(args.config)
+```
+
+---
+
+## Advanced Techniques 
+
+### 1. Context Window Management
+
+```python
+def truncate_conversation(messages: List[Dict], max_tokens: int, tokenizer) -> List[Dict]:
+    """
+    Truncate conversation to fit within max_tokens while keeping most recent turns
+    """
+    total_tokens = 0
+    truncated_messages = []
+    
+    # Keep system message
+    if messages[0]['role'] == 'system':
+        truncated_messages.append(messages[0])
+        total_tokens += len(tokenizer.encode(messages[0]['content']))
+        messages = messages[1:]
+    
+    # Reverse to prioritize recent messages
+    for msg in reversed(messages):
+        msg_tokens = len(tokenizer.encode(msg['content']))
+        
+        if total_tokens + msg_tokens <= max_tokens:
+            truncated_messages.insert(1 if truncated_messages[0]['role'] == 'system' else 0, msg)
+            total_tokens += msg_tokens
+        else:
+            break
+    
+    return truncated_messages
+```
+
+### 2. Response Quality Filtering
+
+```python
+def filter_quality_responses(dataset: Dataset, min_length: int = 10, max_length: int = 2048) -> Dataset:
+    """
+    Filter dataset based on response quality metrics
+    """
+    def is_quality_sample(example):
+        messages = example['messages']
+        
+        # Check for assistant responses
+        assistant_msgs = [m for m in messages if m['role'] == 'assistant']
+        
+        if not assistant_msgs:
+            return False
+        
+        # Check response length
+        for msg in assistant_msgs:
+            content_len = len(msg['content'])
+            if content_len < min_length or content_len > max_length:
+                return False
+        
+        # Check for meaningful content
+        for msg in assistant_msgs:
+            content = msg['content'].lower()
+            if content in ['', 'ok', 'yes', 'no', 'sure']:
+                return False
+        
+        return True
+    
+    return dataset.filter(is_quality_sample)
+```
+
+### 3. Conversation Augmentation
+
+```python
+def augment_conversation(messages: List[Dict]) -> List[List[Dict]]:
+    """
+    Create multiple training samples from one conversation
+    """
+    augmented = []
+    
+    # Create cumulative conversation samples
+    for i in range(2, len(messages), 2):  # Every user-assistant pair
+        sample = messages[:i+1]
+        augmented.append(sample)
+    
+    return augmented
+```
+
+---
+
+## Evaluation & Testing 
+
+### Inference with Multi-Turn Context
+
+```python
+from unsloth import FastLanguageModel
+import torch
+
+# Load fine-tuned model
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name="./outputs/qwen3_multiturn_unsloth",
+    max_seq_length=2048,
+    dtype=None,
+    load_in_4bit=True
+)
+
+FastLanguageModel.for_inference(model)
+
+# Multi-turn conversation
+conversation = [
+    {"role": "system", "content": "You are a helpful programming assistant."},
+    {"role": "user", "content": "What is Python?"},
+]
+
+# First response
+inputs = tokenizer.apply_chat_template(
+    conversation,
+    tokenize=True,
+    add_generation_prompt=True,
+    return_tensors="pt"
+).to("cuda")
+
+outputs = model.generate(
+    input_ids=inputs,
+    max_new_tokens=256,
+    temperature=0.7,
+    top_p=0.9,
+    do_sample=True
+)
+
+response_1 = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
+print(f"Assistant: {response_1}")
+
+# Add to conversation
+conversation.append({"role": "assistant", "content": response_1})
+conversation.append({"role": "user", "content": "Can you show me a code example?"})
+
+# Second response (with context!)
+inputs = tokenizer.apply_chat_template(
+    conversation,
+    tokenize=True,
+    add_generation_prompt=True,
+    return_tensors="pt"
+).to("cuda")
+
+outputs = model.generate(
+    input_ids=inputs,
+    max_new_tokens=256,
+    temperature=0.7,
+    top_p=0.9
+)
+
+response_2 = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
+print(f"Assistant: {response_2}")
+```
+
+### Evaluation Metrics
+
+```python
+from rouge_score import rouge_scorer
+from bert_score import score
+
+def evaluate_multiturn_model(model, tokenizer, test_dataset):
+    """
+    Evaluate multi-turn model on various metrics
+    """
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+    
+    rouge_scores = []
+    bert_scores = []
+    
+    for example in test_dataset:
+        messages = example['messages']
+        
+        # Separate context and ground truth
+        context = messages[:-1]
+        ground_truth = messages[-1]['content']
+        
+        # Generate prediction
+        inputs = tokenizer.apply_chat_template(
+            context,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_tensors="pt"
+        ).to("cuda")
+        
+        outputs = model.generate(inputs, max_new_tokens=256)
+        prediction = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
+        
+        # Calculate ROUGE
+        rouge = scorer.score(ground_truth, prediction)
+        rouge_scores.append(rouge)
+        
+        # Calculate BERTScore
+        P, R, F1 = score([prediction], [ground_truth], lang='en', verbose=False)
+        bert_scores.append(F1.item())
+    
+    # Aggregate results
+    avg_rouge_1 = sum([s['rouge1'].fmeasure for s in rouge_scores]) / len(rouge_scores)
+    avg_rouge_2 = sum([s['rouge2'].fmeasure for s in rouge_scores]) / len(rouge_scores)
+    avg_rouge_l = sum([s['rougeL'].fmeasure for s in rouge_scores]) / len(rouge_scores)
+    avg_bert = sum(bert_scores) / len(bert_scores)
+    
+    return {
+        'rouge-1': avg_rouge_1,
+        'rouge-2': avg_rouge_2,
+        'rouge-L': avg_rouge_l,
+        'bert-score': avg_bert
+    }
+```
+
+---
+
+## Production Deployment 
+
+### Optimize for Inference
+
+```python
+# Save model in inference-optimized format
+FastLanguageModel.for_inference(model)
+
+# Save with merged LoRA weights (faster inference)
+model.save_pretrained_merged(
+    "model_merged",
+    tokenizer,
+    save_method="merged_16bit"  # or "merged_4bit", "lora"
+)
+```
+
+### API Endpoint Example
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import List, Dict
+
+app = FastAPI()
+
+# Load model once at startup
+model, tokenizer = FastLanguageModel.from_pretrained(
+    "model_merged",
+    max_seq_length=2048,
+    dtype=None,
+    load_in_4bit=True
+)
+FastLanguageModel.for_inference(model)
+
+class ConversationRequest(BaseModel):
+    messages: List[Dict[str, str]]
+    max_tokens: int = 256
+    temperature: float = 0.7
+
+@app.post("/chat")
+async def chat(request: ConversationRequest):
+    inputs = tokenizer.apply_chat_template(
+        request.messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_tensors="pt"
+    ).to("cuda")
+    
+    outputs = model.generate(
+        inputs,
+        max_new_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=0.9
+    )
+    
+    response = tokenizer.decode(
+        outputs[0][inputs.shape[1]:],
+        skip_special_tokens=True
+    )
+    
+    return {"response": response}
+```
+
+### Memory Management Tips
+
+```python
+import torch
+import gc
+
+def clear_memory():
+    """Clear GPU memory between requests"""
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+# Use after each inference
+clear_memory()
+```
+
+---
+
+## Conclusion
+
+Fine-tuning untuk multi-turn conversations menghasilkan:
+
+✅ **Contextual Understanding**: Model mengingat percakapan sebelumnya  
+✅ **Consistent Responses**: Respons yang konsisten sepanjang dialog  
+✅ **Natural Conversations**: Dialog yang lebih natural dan human-like  
+✅ **Domain Expertise**: Model yang specialized untuk use case spesifik  
+✅ **Production Ready**: Siap deploy sebagai chatbot atau virtual assistant
+
+### Key Takeaways
+
+1. **Dataset Quality** lebih penting dari quantity
+2. **Train on responses only** untuk efisiensi
+3. **Context window** management crucial untuk long conversations
+4. **Evaluation metrics** harus comprehensive (ROUGE, BERT, human eval)
+5. **Inference optimization** critical untuk production
+
+---
+
+> **📌 Next Steps:**
+> - Experiment dengan different LoRA ranks (8, 16, 32)
+> - Try different chat templates (ChatML, Llama, Mistral)
+> - Implement conversation state management
+> - Add retrieval-augmented generation (RAG)
+> - Deploy dengan streaming responses
+
+> **🔗 Resources:**
+> - [Unsloth Documentation](https://github.com/unslothai/unsloth)
+> - [Chat Templates Guide](https://huggingface.co/docs/transformers/chat_templating)
+> - [TRL Multi-Turn Examples](https://github.com/huggingface/trl/tree/main/examples)
+> - [Conversation Design Best Practices](https://www.nngroup.com/articles/chatbot-design/)
+
+**Happy Building Conversational AI! 🤖💬**

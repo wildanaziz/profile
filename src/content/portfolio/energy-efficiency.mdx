@@ -1,0 +1,77 @@
+---
+title: "Energy Efficiency Building Prediction"
+category: "machine learning"
+image: "/assets/images/Energy Efficiency Building Prediction.png"
+description: "Predicting energy efficiency of buildings using machine learning regression models"
+techStack: ["Python", "Scikit-learn", "Random Forest", "Gradient Boosting", "Neural Networks"]
+github: "https://github.com/wildanaziz"
+demo: "#"
+date: "2024-02-20"
+---
+
+# Energy Efficiency Building Prediction
+
+## Project Overview
+This machine learning project focuses on predicting the heating and cooling load requirements of buildings based on their structural characteristics, helping architects and engineers design more energy-efficient buildings.
+
+## Dataset
+The dataset includes 768 building samples with 8 features:
+- Relative Compactness
+- Surface Area
+- Wall Area
+- Roof Area
+- Overall Height
+- Orientation
+- Glazing Area
+- Glazing Area Distribution
+
+## Methodology
+
+### Data Preprocessing
+- Feature scaling using StandardScaler
+- Correlation analysis to identify key features
+- Train-test split (80-20 ratio)
+
+### Models Implemented
+1. **Linear Regression** - Baseline model
+2. **Random Forest Regressor** - Best performing model
+3. **Gradient Boosting** - Alternative ensemble method
+4. **Neural Network** - Deep learning approach
+
+## Results
+
+### Model Performance
+- **Random Forest**: R² score of 0.98
+- **Gradient Boosting**: R² score of 0.97
+- **Neural Network**: R² score of 0.96
+- **Linear Regression**: R² score of 0.92
+
+### Key Insights
+- Glazing area has the highest impact on energy efficiency
+- Overall height and relative compactness are strong predictors
+- Ensemble methods significantly outperform linear models
+
+## Real-World Applications
+- **Building Design**: Help architects optimize for energy efficiency
+- **Retrofit Planning**: Identify buildings that need energy improvements
+- **Cost Estimation**: Predict energy costs for new constructions
+- **Sustainability**: Reduce carbon footprint of buildings
+
+## Technologies Used
+```python
+- Python 3.9
+- scikit-learn
+- pandas
+- numpy
+- matplotlib & seaborn (visualization)
+- Jupyter Notebook
+```
+
+## Future Enhancements
+- Incorporate weather data for more accurate predictions
+- Develop a web application for real-time predictions
+- Add more building features like HVAC systems
+- Implement transfer learning for different climate zones
+
+## Conclusion
+This project demonstrates how machine learning can contribute to sustainable architecture and help reduce energy consumption in buildings, addressing critical environmental challenges.
