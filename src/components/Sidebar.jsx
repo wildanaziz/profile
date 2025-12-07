@@ -7,7 +7,7 @@ const Sidebar = () => {
     <aside className={`sidebar ${showContacts ? 'active' : ''}`} data-sidebar>
       <div className="sidebar-info">
         <figure className="avatar-box">
-          <img src="./assets/images/chloe.png" alt="Wildan" width="80" />
+          <img src="../../public/assets/chloe.png" alt="Wildan" width="80" />
         </figure>
 
         <div className="info-content">

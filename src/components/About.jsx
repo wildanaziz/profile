@@ -66,7 +66,7 @@ const About = () => {
 
           <li className="service-item">
             <div className="service-icon-box">
-              <img src="./assets/images/icon-photo.svg" alt="camera icon" width="40" />
+              <img src="../../public/assets/icon-quote.svg" alt="camera icon" width="40" />
             </div>
 
             <div className="service-content-box">
